@@ -37,6 +37,43 @@ def list_organizations() -> list[dict[str, Any]]:
     return [_to_response(row) for row in rows]
 
 
+def get_organization(record_id: str) -> dict[str, Any] | None:
+    """Return one organization, or None when it does not exist."""
+
+    with get_connection() as connection:
+        row = connection.execute(
+            """
+            SELECT record_id, name, tier, member_limit
+            FROM organizations
+            WHERE record_id = ?
+            """,
+            (record_id,),
+        ).fetchone()
+
+    return _to_response(row) if row else None
+
+
+def count_organization_users(organization_id: str) -> int:
+    """
+    Count users assigned to an organization.
+
+    The User page uses this count to stop new users from being created
+    after the organization's purchased member limit has been reached.
+    """
+
+    with get_connection() as connection:
+        row = connection.execute(
+            """
+            SELECT COUNT(*) AS total
+            FROM users
+            WHERE organization_id = ?
+            """,
+            (organization_id,),
+        ).fetchone()
+
+    return int(row["total"])
+
+
 def organization_name_exists(name: str) -> bool:
     """Check whether an organization name already exists."""
 
