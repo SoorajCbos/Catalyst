@@ -2,18 +2,20 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.v1.api import api_router
+from app.services.organization_store import initialize_organization_store
 from app.services.user_store import initialize_user_store
 
 initialize_user_store()
+initialize_organization_store()
 
 app = FastAPI(title="Catalyst Backend")
 
 app.add_middleware(
-	CORSMiddleware,
-	allow_origins=["http://localhost:3000"],
-	allow_credentials=True,
-	allow_methods=["*"],
-	allow_headers=["*"],
+        CORSMiddleware,
+        allow_origins=["http://localhost:3000"],
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
 )
 
 app.include_router(api_router, prefix="/api/v1")
