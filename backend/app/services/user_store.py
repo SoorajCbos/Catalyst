@@ -10,7 +10,7 @@ from typing import Any
 
 DATABASE_PATH = Path(__file__).resolve().parents[2] / "data" / "catalyst.sqlite3"
 
-# This test account is created whenever the local database starts.
+# Predictable platform-admin account used only for local testing.
 APP_ADMIN_PASSWORD_HASH = hashlib.sha256(
     "Catalyst_@gent01".encode("utf-8")
 ).hexdigest()
@@ -51,7 +51,7 @@ def initialize_user_store() -> None:
             """
         )
 
-        # Keep one predictable account for testing the login page locally.
+        # Keep one predictable account for local login testing.
         connection.execute(
             """
             INSERT INTO users (
@@ -87,20 +87,15 @@ def hash_password(password: str) -> str:
     """
     Hash a password before saving it.
 
-    This keeps the existing testing approach compatible with sir's login
-    implementation. Plain passwords are never stored in the database.
+    This retains compatibility with the current testing implementation.
+    Plain passwords are never stored in the database.
     """
 
     return hashlib.sha256(password.encode("utf-8")).hexdigest()
 
 
 def generate_default_password(length: int = 12) -> str:
-    """
-    Generate a random default password for a new user.
-
-    The password is returned once after user creation. Only its hash is
-    stored. The user can change the password later.
-    """
+    """Generate a random default password for a new user."""
 
     characters = string.ascii_letters + string.digits
 
@@ -120,12 +115,7 @@ def username_exists(username: str) -> bool:
 
 
 def list_users(organization_id: str | None = None) -> list[dict[str, Any]]:
-    """
-    Return users without exposing their password hashes.
-
-    When organization_id is provided, only users from that organization
-    are returned.
-    """
+    """Return users without exposing their password hashes."""
 
     query = """
         SELECT record_id, username, email, organization_id, active, profile
@@ -154,9 +144,8 @@ def create_user(
     """
     Create a user with a generated default password.
 
-    Only the password hash is inserted into SQLite. The plain default
-    password is included in the response once so the administrator can
-    provide it to the new user.
+    Only the password hash is stored. The plain password is returned once
+    so the administrator can provide it to the new user.
     """
 
     record_id = f"user_{uuid.uuid4().hex[:12]}"
@@ -222,6 +211,37 @@ def authenticate_user(username: str, password: str) -> dict[str, Any] | None:
         return None
 
     return _user_to_response(user)
+
+
+def change_user_password(
+    username: str,
+    current_password: str,
+    new_password: str,
+) -> bool:
+    """
+    Replace a user's password after validating the current password.
+
+    This works for both a generated default password and an ordinary
+    password. False is returned when the username or current password is
+    incorrect.
+    """
+
+    user = authenticate_user(username, current_password)
+
+    if user is None:
+        return False
+
+    with get_connection() as connection:
+        result = connection.execute(
+            """
+            UPDATE users
+            SET password_sha256 = ?
+            WHERE username = ?
+            """,
+            (hash_password(new_password), username),
+        )
+
+    return result.rowcount == 1
 
 
 def _user_to_response(user) -> dict[str, Any]:
