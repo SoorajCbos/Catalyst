@@ -1,8 +1,8 @@
 {
-        "command": "echo Please specify the start-up command in the app-config.json file under the key command for AppSail $X_ZC_RESOURCE_NAME",
-        "build_path": ".",
-        "stack": "python_3_13",
-        "env_variables": {},
-        "memory": 256,
-        "scripts": {}
+    "command": "npm run build && npx next start -H 0.0.0.0 -p $X_ZOHO_CATALYST_LISTEN_PORT",
+    "build_path": ".",
+    "stack": "node22",
+    "env_variables": {},
+    "memory": 512,
+    "scripts": {}
 }
