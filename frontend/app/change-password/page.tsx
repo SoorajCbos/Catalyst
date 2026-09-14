@@ -1,19 +1,54 @@
 "use client";
 
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
+
+type CurrentUser = {
+  recordId: string;
+  username: string;
+  email: string;
+  organizationId: string;
+  active: boolean;
+  profile: string;
+  mustChangePassword: boolean;
+};
 
 export default function ChangePasswordPage() {
-  const [username, setUsername] = useState("");
+  const router = useRouter();
+
+  const [currentUser, setCurrentUser] = useState<CurrentUser | null>(null);
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
 
+  const [isChecking, setIsChecking] = useState(true);
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
-  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  useEffect(() => {
+    async function loadCurrentUser() {
+      try {
+        // The backend identifies the user from the HTTP-only JWT cookie.
+        const response = await fetch("/api/v1/auth/me");
+
+        if (!response.ok) {
+          router.replace("/");
+          return;
+        }
+
+        setCurrentUser((await response.json()) as CurrentUser);
+      } catch {
+        router.replace("/");
+      } finally {
+        setIsChecking(false);
+      }
+    }
+
+    void loadCurrentUser();
+  }, [router]);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
-    // Prevent the browser from reloading the page when the form submits.
     event.preventDefault();
 
     setError("");
@@ -32,8 +67,9 @@ export default function ChangePasswordPage() {
         headers: {
           "Content-Type": "application/json",
         },
+        // Username is not sent. The backend gets the user's identity from
+        // the verified JWT session.
         body: JSON.stringify({
-          username: username.trim(),
           currentPassword,
           newPassword,
           confirmPassword,
@@ -43,16 +79,21 @@ export default function ChangePasswordPage() {
       const data = await response.json();
 
       if (!response.ok) {
-        // FastAPI returns readable error messages in the detail property.
         throw new Error(data.detail ?? "Could not change the password.");
       }
 
       setMessage(data.message);
 
-      // Clear password fields after a successful change.
-      setCurrentPassword("");
-      setNewPassword("");
-      setConfirmPassword("");
+      // End the old session so the user verifies the new password by
+      // signing in again.
+      await fetch("/api/v1/auth/logout", {
+        method: "POST",
+      });
+
+      window.setTimeout(() => {
+        router.replace("/");
+        router.refresh();
+      }, 1000);
     } catch (submitError) {
       setError(
         submitError instanceof Error
@@ -64,6 +105,18 @@ export default function ChangePasswordPage() {
     }
   }
 
+  if (isChecking) {
+    return (
+      <main className="flex min-h-screen items-center justify-center bg-[#f3f0e8]">
+        <p className="text-sm text-[#63717a]">Checking session...</p>
+      </main>
+    );
+  }
+
+  if (!currentUser) {
+    return null;
+  }
+
   return (
     <main className="min-h-screen bg-[#f3f0e8] px-6 py-10 text-[#172026]">
       <div className="mx-auto max-w-md">
@@ -71,31 +124,30 @@ export default function ChangePasswordPage() {
           <h1 className="text-2xl font-bold">Change Password</h1>
 
           <p className="mt-2 text-sm leading-6 text-[#63717a]">
-            Enter your username, current password and new password.
+            Signed in as{" "}
+            <span className="font-semibold">{currentUser.username}</span>
           </p>
+
+          {currentUser.mustChangePassword ? (
+            <p className="mt-4 rounded-md border border-[#d9b96e] bg-[#fff9e8] px-4 py-3 text-sm text-[#72551a]">
+              You must replace your generated default password before
+              continuing.
+            </p>
+          ) : null}
 
           <form onSubmit={handleSubmit} className="mt-6 space-y-4">
             <label className="block">
-              <span className="text-sm font-semibold">Username</span>
-
-              <input
-                className="mt-1 h-11 w-full rounded-md border border-[#cfc4b3] px-3 text-sm"
-                value={username}
-                onChange={(event) => setUsername(event.target.value)}
-                maxLength={100}
-                autoComplete="username"
-                required
-              />
-            </label>
-
-            <label className="block">
-              <span className="text-sm font-semibold">Current password</span>
+              <span className="text-sm font-semibold">
+                Current password
+              </span>
 
               <input
                 className="mt-1 h-11 w-full rounded-md border border-[#cfc4b3] px-3 text-sm"
                 type="password"
                 value={currentPassword}
-                onChange={(event) => setCurrentPassword(event.target.value)}
+                onChange={(event) =>
+                  setCurrentPassword(event.target.value)
+                }
                 autoComplete="current-password"
                 required
               />
@@ -128,7 +180,9 @@ export default function ChangePasswordPage() {
                 className="mt-1 h-11 w-full rounded-md border border-[#cfc4b3] px-3 text-sm"
                 type="password"
                 value={confirmPassword}
-                onChange={(event) => setConfirmPassword(event.target.value)}
+                onChange={(event) =>
+                  setConfirmPassword(event.target.value)
+                }
                 minLength={8}
                 autoComplete="new-password"
                 required
@@ -143,7 +197,7 @@ export default function ChangePasswordPage() {
 
             {message ? (
               <p className="rounded-md border border-[#9cc4b4] bg-[#f4faf7] px-4 py-3 text-sm text-[#1e3a3a]">
-                {message}
+                {message} Returning to sign in...
               </p>
             ) : null}
 
@@ -152,16 +206,11 @@ export default function ChangePasswordPage() {
               disabled={isSubmitting}
               className="h-11 w-full rounded-md bg-[#1e3a3a] px-5 text-sm font-semibold text-white disabled:bg-[#9aa7a7]"
             >
-              {isSubmitting ? "Changing password..." : "Change password"}
+              {isSubmitting
+                ? "Changing password..."
+                : "Change password"}
             </button>
           </form>
-
-          <a
-            href="/"
-            className="mt-5 block text-center text-sm font-semibold text-[#1e3a3a] hover:underline"
-          >
-            Back to sign in
-          </a>
         </section>
       </div>
     </main>

@@ -1,8 +1,23 @@
 """Authentication and password-management routes."""
 
-from fastapi import APIRouter, HTTPException, status
+import os
+from typing import Any
+
+from fastapi import (
+    APIRouter,
+    Depends,
+    HTTPException,
+    Response,
+    status,
+)
 from pydantic import BaseModel, Field
 
+from app.core.access import require_user
+from app.core.jwt_auth import (
+    JWT_EXPIRY_HOURS,
+    SESSION_COOKIE_NAME,
+    create_access_token,
+)
 from app.services.user_store import (
     authenticate_user,
     change_user_password,
@@ -12,7 +27,7 @@ router = APIRouter()
 
 
 class LoginRequest(BaseModel):
-    """Username and password sent by the login form."""
+    """Username and password submitted by the login page."""
 
     username: str
     password: str
@@ -27,26 +42,31 @@ class UserResponse(BaseModel):
     organizationId: str
     active: bool
     profile: str
+    mustChangePassword: bool
 
 
 class LoginResponse(BaseModel):
-    """Login result containing the user and their entry page."""
+    """Login response containing the user and their entry page."""
 
     user: UserResponse
     entryPoint: str
 
 
 class ChangePasswordRequest(BaseModel):
-    """Data required to replace a user's existing password."""
+    """
+    Information required to replace the current user's password.
 
-    username: str = Field(min_length=1, max_length=100)
+    Username is deliberately omitted. The backend gets the identity from
+    the verified JWT instead of trusting a username sent by the browser.
+    """
+
     currentPassword: str = Field(min_length=1)
     newPassword: str = Field(min_length=8)
     confirmPassword: str = Field(min_length=8)
 
 
 class MessageResponse(BaseModel):
-    """Simple success message returned after changing a password."""
+    """A simple API success message."""
 
     message: str
 
@@ -59,10 +79,16 @@ ENTRY_POINTS = {
 
 
 @router.post("/login", response_model=LoginResponse)
-def login(payload: LoginRequest) -> LoginResponse:
-    """Authenticate a user and return their correct entry point."""
+def login(
+    payload: LoginRequest,
+    response: Response,
+) -> LoginResponse:
+    """Authenticate the user and create an HTTP-only JWT session."""
 
-    user = authenticate_user(payload.username.strip(), payload.password)
+    user = authenticate_user(
+        payload.username.strip(),
+        payload.password,
+    )
 
     # Use one generic error so callers cannot discover valid usernames.
     if user is None:
@@ -77,20 +103,69 @@ def login(payload: LoginRequest) -> LoginResponse:
             detail="User is inactive.",
         )
 
+    token = create_access_token(user)
+
+    response.set_cookie(
+        key=SESSION_COOKIE_NAME,
+        value=token,
+        httponly=True,
+        samesite="lax",
+        # Local HTTP testing cannot use secure cookies. AppSail must set
+        # APP_ENV=production so production cookies become HTTPS-only.
+        secure=os.environ.get("APP_ENV") == "production",
+        max_age=JWT_EXPIRY_HOURS * 60 * 60,
+        path="/",
+    )
+
+    # New users with generated passwords must change them before entering
+    # their normal organization area.
+    entry_point = (
+        "/change-password"
+        if user["mustChangePassword"]
+        else ENTRY_POINTS[user["profile"]]
+    )
+
     return LoginResponse(
         user=UserResponse(**user),
-        entryPoint=ENTRY_POINTS[user["profile"]],
+        entryPoint=entry_point,
     )
+
+
+@router.get("/me", response_model=UserResponse)
+def get_current_user(
+    current_user: dict[str, Any] = Depends(require_user),
+) -> UserResponse:
+    """Return the current active user from their verified JWT session."""
+
+    return UserResponse(**current_user)
+
+
+@router.post("/logout", response_model=MessageResponse)
+def logout(response: Response) -> MessageResponse:
+    """Remove the authentication cookie from the browser."""
+
+    response.delete_cookie(
+        key=SESSION_COOKIE_NAME,
+        path="/",
+    )
+
+    return MessageResponse(message="Logged out successfully.")
 
 
 @router.post(
     "/change-password",
     response_model=MessageResponse,
 )
-def change_password(payload: ChangePasswordRequest) -> MessageResponse:
-    """Validate the current password and replace it with a new password."""
+def change_password(
+    payload: ChangePasswordRequest,
+    current_user: dict[str, Any] = Depends(require_user),
+) -> MessageResponse:
+    """
+    Change the password belonging to the authenticated user.
 
-    username = payload.username.strip()
+    The username comes from the verified session rather than the request,
+    preventing one user from attempting to change another user's password.
+    """
 
     if payload.newPassword != payload.confirmPassword:
         raise HTTPException(
@@ -105,7 +180,7 @@ def change_password(payload: ChangePasswordRequest) -> MessageResponse:
         )
 
     password_changed = change_user_password(
-        username=username,
+        username=current_user["username"],
         current_password=payload.currentPassword,
         new_password=payload.newPassword,
     )
@@ -113,7 +188,7 @@ def change_password(payload: ChangePasswordRequest) -> MessageResponse:
     if not password_changed:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid username or current password.",
+            detail="Current password is incorrect.",
         )
 
     return MessageResponse(message="Password changed successfully.")
