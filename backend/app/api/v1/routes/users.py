@@ -1,10 +1,11 @@
-"""API routes for listing and creating users."""
+"""Protected API routes for listing and creating users."""
 
-from typing import Literal
+from typing import Any, Literal
 
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 
+from app.core.access import require_admin
 from app.services.organization_store import (
     count_organization_users,
     get_organization,
@@ -19,7 +20,7 @@ router = APIRouter()
 
 
 class UserResponse(BaseModel):
-    """User information that is safe to return to the frontend."""
+    """User information safe to return to administrators."""
 
     recordId: str
     username: str
@@ -30,12 +31,7 @@ class UserResponse(BaseModel):
 
 
 class CreatedUserResponse(UserResponse):
-    """
-    Response returned immediately after creating a user.
-
-    The default password is shown once. It is not returned when users are
-    listed because the plain password is never stored.
-    """
+    """New user response containing the one-time default password."""
 
     defaultPassword: str
 
@@ -55,14 +51,22 @@ def get_users(
         default=None,
         alias="organizationId",
     ),
+    current_user: dict[str, Any] = Depends(require_admin),
 ) -> list[UserResponse]:
-    """
-    Return users, optionally filtered by organization.
+    """Return users according to the administrator's permissions."""
 
-    The URL can be either:
-        /api/v1/users
-        /api/v1/users?organizationId=org_123
-    """
+    if current_user["profile"] == "organization_admin":
+        # Organization administrators can only view their own members.
+        if (
+            organization_id
+            and organization_id != current_user["organizationId"]
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You cannot view users from another organization.",
+            )
+
+        organization_id = current_user["organizationId"]
 
     return [
         UserResponse(**user)
@@ -75,11 +79,30 @@ def get_users(
     response_model=CreatedUserResponse,
     status_code=status.HTTP_201_CREATED,
 )
-def post_user(payload: CreateUserRequest) -> CreatedUserResponse:
-    """Create a user with a generated default password."""
+def post_user(
+    payload: CreateUserRequest,
+    current_user: dict[str, Any] = Depends(require_admin),
+) -> CreatedUserResponse:
+    """Create a user while enforcing organization and role boundaries."""
 
     username = payload.username.strip()
     email = payload.email.strip()
+
+    if current_user["profile"] == "organization_admin":
+        # Organization administrators cannot add users elsewhere.
+        if payload.organizationId != current_user["organizationId"]:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You can only add users to your own organization.",
+            )
+
+        # Organization administrators may create members, but they cannot
+        # promote another user to administrator.
+        if payload.profile != "member":
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Organization administrators can only add members.",
+            )
 
     if username_exists(username):
         raise HTTPException(
@@ -95,9 +118,11 @@ def post_user(payload: CreateUserRequest) -> CreatedUserResponse:
             detail="Organization not found.",
         )
 
-    current_user_count = count_organization_users(payload.organizationId)
+    current_user_count = count_organization_users(
+        payload.organizationId
+    )
 
-    # Stop creation when the organization has used all purchased seats.
+    # This backend check cannot be bypassed by manually calling the API.
     if current_user_count >= organization["memberLimit"]:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,

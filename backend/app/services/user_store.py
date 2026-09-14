@@ -46,12 +46,31 @@ def initialize_user_store() -> None:
                         'member'
                     )
                 ),
-                password_sha256 TEXT NOT NULL
+                password_sha256 TEXT NOT NULL,
+                must_change_password INTEGER NOT NULL DEFAULT 0
             )
             """
         )
 
-        # Keep one predictable account for local login testing.
+        # Existing local databases may have been created before the
+        # must_change_password column was introduced.
+        columns = {
+            row["name"]
+            for row in connection.execute(
+                "PRAGMA table_info(users)"
+            ).fetchall()
+        }
+
+        if "must_change_password" not in columns:
+            connection.execute(
+                """
+                ALTER TABLE users
+                ADD COLUMN must_change_password INTEGER NOT NULL DEFAULT 0
+                """
+            )
+
+        # Keep one predictable account for local login testing. The
+        # platform administrator is not forced to change this test password.
         connection.execute(
             """
             INSERT INTO users (
@@ -61,15 +80,17 @@ def initialize_user_store() -> None:
                 organization_id,
                 active,
                 profile,
-                password_sha256
+                password_sha256,
+                must_change_password
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(username) DO UPDATE SET
                 email = excluded.email,
                 organization_id = excluded.organization_id,
                 active = excluded.active,
                 profile = excluded.profile,
-                password_sha256 = excluded.password_sha256
+                password_sha256 = excluded.password_sha256,
+                must_change_password = excluded.must_change_password
             """,
             (
                 "user_app_admin_001",
@@ -79,6 +100,7 @@ def initialize_user_store() -> None:
                 1,
                 "platform_admin",
                 APP_ADMIN_PASSWORD_HASH,
+                0,
             ),
         )
 
@@ -87,7 +109,7 @@ def hash_password(password: str) -> str:
     """
     Hash a password before saving it.
 
-    This retains compatibility with the current testing implementation.
+    This retains compatibility with the existing testing implementation.
     Plain passwords are never stored in the database.
     """
 
@@ -114,11 +136,20 @@ def username_exists(username: str) -> bool:
     return row is not None
 
 
-def list_users(organization_id: str | None = None) -> list[dict[str, Any]]:
+def list_users(
+    organization_id: str | None = None,
+) -> list[dict[str, Any]]:
     """Return users without exposing their password hashes."""
 
     query = """
-        SELECT record_id, username, email, organization_id, active, profile
+        SELECT
+            record_id,
+            username,
+            email,
+            organization_id,
+            active,
+            profile,
+            must_change_password
         FROM users
     """
     parameters: tuple[str, ...] = ()
@@ -144,8 +175,8 @@ def create_user(
     """
     Create a user with a generated default password.
 
-    Only the password hash is stored. The plain password is returned once
-    so the administrator can provide it to the new user.
+    The plain default password is returned once. Only its hash is stored.
+    The new user must replace it after their first successful login.
     """
 
     record_id = f"user_{uuid.uuid4().hex[:12]}"
@@ -161,9 +192,10 @@ def create_user(
                 organization_id,
                 active,
                 profile,
-                password_sha256
+                password_sha256,
+                must_change_password
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 record_id,
@@ -173,6 +205,7 @@ def create_user(
                 1,
                 profile,
                 hash_password(default_password),
+                1,
             ),
         )
 
@@ -183,11 +216,45 @@ def create_user(
         "organizationId": organization_id,
         "active": True,
         "profile": profile,
+        "mustChangePassword": True,
         "defaultPassword": default_password,
     }
 
 
-def authenticate_user(username: str, password: str) -> dict[str, Any] | None:
+def get_user_by_record_id(
+    record_id: str,
+) -> dict[str, Any] | None:
+    """
+    Return the current database record for an authenticated user.
+
+    Re-reading the user ensures account deactivation and profile changes
+    take effect without waiting for the JWT to expire.
+    """
+
+    with get_connection() as connection:
+        user = connection.execute(
+            """
+            SELECT
+                record_id,
+                username,
+                email,
+                organization_id,
+                active,
+                profile,
+                must_change_password
+            FROM users
+            WHERE record_id = ?
+            """,
+            (record_id,),
+        ).fetchone()
+
+    return _user_to_response(user) if user else None
+
+
+def authenticate_user(
+    username: str,
+    password: str,
+) -> dict[str, Any] | None:
     """Validate a username and password against the local user table."""
 
     with get_connection() as connection:
@@ -200,14 +267,18 @@ def authenticate_user(username: str, password: str) -> dict[str, Any] | None:
                 organization_id,
                 active,
                 profile,
-                password_sha256
+                password_sha256,
+                must_change_password
             FROM users
             WHERE username = ?
             """,
             (username,),
         ).fetchone()
 
-    if user is None or user["password_sha256"] != hash_password(password):
+    if user is None:
+        return None
+
+    if user["password_sha256"] != hash_password(password):
         return None
 
     return _user_to_response(user)
@@ -219,11 +290,10 @@ def change_user_password(
     new_password: str,
 ) -> bool:
     """
-    Replace a user's password after validating the current password.
+    Replace a password after validating the current password.
 
-    This works for both a generated default password and an ordinary
-    password. False is returned when the username or current password is
-    incorrect.
+    A successful change also clears must_change_password, allowing the
+    user to proceed to their normal application entry point.
     """
 
     user = authenticate_user(username, current_password)
@@ -235,10 +305,15 @@ def change_user_password(
         result = connection.execute(
             """
             UPDATE users
-            SET password_sha256 = ?
+            SET
+                password_sha256 = ?,
+                must_change_password = 0
             WHERE username = ?
             """,
-            (hash_password(new_password), username),
+            (
+                hash_password(new_password),
+                username,
+            ),
         )
 
     return result.rowcount == 1
@@ -254,4 +329,5 @@ def _user_to_response(user) -> dict[str, Any]:
         "organizationId": user["organization_id"],
         "active": bool(user["active"]),
         "profile": user["profile"],
+        "mustChangePassword": bool(user["must_change_password"]),
     }
