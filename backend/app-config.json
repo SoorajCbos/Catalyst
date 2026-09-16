@@ -3,7 +3,7 @@
   "build_path": "build",
   "stack": "python_3_13",
   "env_variables": {
-    "APP_ENV": "production",
+    "APP_ENV": "production"
   },
   "memory": 256,
   "scripts": {}

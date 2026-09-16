@@ -6,12 +6,12 @@ import zcatalyst_sdk
 from fastapi import HTTPException, Request, status
 
 
-def require_catalyst_app(request: Request) -> Any:
+def get_catalyst_app(request: Request) -> Any | None:
     """
-    Initialize Catalyst using headers injected by AppSail.
+    Return a Catalyst app inside AppSail.
 
-    This will not work under plain localhost because Catalyst headers are
-    only added after deployment. Local development continues using SQLite.
+    Local Uvicorn requests lack Catalyst headers, so None is returned and
+    service files can use SQLite for local testing.
     """
 
     try:
@@ -19,9 +19,19 @@ def require_catalyst_app(request: Request) -> Any:
             req=request,
             scope="admin",
         )
-    except Exception as error:
-        # Do not expose credentials or internal SDK errors to callers.
+    except Exception:
+        return None
+
+
+def require_catalyst_app(request: Request) -> Any:
+    """Require Catalyst instead of allowing the SQLite fallback."""
+
+    catalyst_app = get_catalyst_app(request)
+
+    if catalyst_app is None:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Catalyst services are unavailable in this environment.",
-        ) from error
+        )
+
+    return catalyst_app
