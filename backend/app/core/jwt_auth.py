@@ -1,6 +1,7 @@
 """JWT creation and verification for authenticated sessions."""
 
 import os
+import secrets
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -9,6 +10,7 @@ import jwt
 JWT_ALGORITHM = "HS256"
 JWT_EXPIRY_HOURS = 8
 SESSION_COOKIE_NAME = "catalyst_session"
+LOCAL_SESSION_SECRET = secrets.token_urlsafe(32)
 
 
 def get_jwt_secret() -> str:
@@ -20,6 +22,9 @@ def get_jwt_secret() -> str:
     """
 
     secret = os.environ.get("SESSION_SECRET")
+
+    if not secret and os.environ.get("APP_ENV", "development") != "production":
+        return LOCAL_SESSION_SECRET
 
     if not secret:
         raise RuntimeError(
