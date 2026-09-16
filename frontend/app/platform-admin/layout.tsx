@@ -104,6 +104,13 @@ export default function PlatformAdminLayout({
 
           <nav className="flex flex-wrap items-center gap-4 text-sm font-semibold">
             <a
+              href="/platform-admin/home"
+              className="hover:underline"
+            >
+              Home
+            </a>
+
+            <a
               href="/platform-admin"
               className="hover:underline"
             >

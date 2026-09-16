@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, useCallback, useEffect, useState } from "react";
+import Link from "next/link";
 
 type Organization = {
   recordId: string;
@@ -48,7 +49,11 @@ export default function PlatformAdminPage() {
 
   // Runs once when the page first appears, to fill the list.
   useEffect(() => {
-    void loadOrganizations();
+    const timer = window.setTimeout(() => {
+      void loadOrganizations();
+    }, 0);
+
+    return () => window.clearTimeout(timer);
   }, [loadOrganizations]);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -98,13 +103,6 @@ export default function PlatformAdminPage() {
       <p className="mt-2 text-sm text-[#63717a]">
         Add organizations and assign their purchased tier and member limit.
       </p>
-
-      <a
-        href="/platform-admin/guides"
-        className="mt-5 inline-block rounded-md border border-[#1e3a3a] px-4 py-2 text-sm font-semibold text-[#1e3a3a]"
-      >
-        Organization permission guides
-      </a>
 
       <section className="mt-8 rounded-lg border border-[#d6cab8] bg-white p-6">
         <h2 className="text-lg font-semibold text-[#172026]">Add an organization</h2>
@@ -180,7 +178,14 @@ export default function PlatformAdminPage() {
               {organizations.map((organization) => (
                 // React needs a stable key per row to track them efficiently.
                 <tr key={organization.recordId} className="border-b border-[#eae3d7]">
-                  <td className="py-2 font-medium text-[#172026]">{organization.name}</td>
+                  <td className="py-2 font-medium text-[#172026]">
+                    <Link
+                      href={`/platform-admin/organizations/${organization.recordId}`}
+                      className="text-[#1e3a3a] underline-offset-4 hover:underline"
+                    >
+                      {organization.name}
+                    </Link>
+                  </td>
                   <td className="py-2 text-[#40505a]">{organization.tier}</td>
                   <td className="py-2 text-[#40505a]">{organization.memberLimit}</td>
                 </tr>
