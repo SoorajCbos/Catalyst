@@ -13,6 +13,7 @@ from fastapi import (
 from pydantic import BaseModel, Field
 
 from app.core.access import require_user
+from app.core.catalyst_app import get_catalyst_app
 from app.core.jwt_auth import (
     JWT_EXPIRY_HOURS,
     SESSION_COOKIE_NAME,
@@ -34,7 +35,7 @@ class LoginRequest(BaseModel):
 
 
 class UserResponse(BaseModel):
-    """Authenticated user details returned to the frontend."""
+    """Authenticated user information."""
 
     recordId: str
     username: str
@@ -46,19 +47,14 @@ class UserResponse(BaseModel):
 
 
 class LoginResponse(BaseModel):
-    """Login response containing the user and their entry page."""
+    """Login result and destination."""
 
     user: UserResponse
     entryPoint: str
 
 
 class ChangePasswordRequest(BaseModel):
-    """
-    Information required to replace the current user's password.
-
-    Username is deliberately omitted. The backend gets the identity from
-    the verified JWT instead of trusting a username sent by the browser.
-    """
+    """Information required to replace a password."""
 
     currentPassword: str = Field(min_length=1)
     newPassword: str = Field(min_length=8)
@@ -66,7 +62,7 @@ class ChangePasswordRequest(BaseModel):
 
 
 class MessageResponse(BaseModel):
-    """A simple API success message."""
+    """Simple API message."""
 
     message: str
 
@@ -82,15 +78,16 @@ ENTRY_POINTS = {
 def login(
     payload: LoginRequest,
     response: Response,
+    catalyst_app: Any | None = Depends(get_catalyst_app),
 ) -> LoginResponse:
-    """Authenticate the user and create an HTTP-only JWT session."""
+    """Authenticate through SQLite locally or Catalyst in AppSail."""
 
     user = authenticate_user(
-        payload.username.strip(),
-        payload.password,
+        username=payload.username.strip(),
+        password=payload.password,
+        catalyst_app=catalyst_app,
     )
 
-    # Use one generic error so callers cannot discover valid usernames.
     if user is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -110,15 +107,11 @@ def login(
         value=token,
         httponly=True,
         samesite="lax",
-        # Local HTTP testing cannot use secure cookies. AppSail must set
-        # APP_ENV=production so production cookies become HTTPS-only.
         secure=os.environ.get("APP_ENV") == "production",
         max_age=JWT_EXPIRY_HOURS * 60 * 60,
         path="/",
     )
 
-    # New users with generated passwords must change them before entering
-    # their normal organization area.
     entry_point = (
         "/change-password"
         if user["mustChangePassword"]
@@ -135,14 +128,14 @@ def login(
 def get_current_user(
     current_user: dict[str, Any] = Depends(require_user),
 ) -> UserResponse:
-    """Return the current active user from their verified JWT session."""
+    """Return the authenticated user."""
 
     return UserResponse(**current_user)
 
 
 @router.post("/logout", response_model=MessageResponse)
 def logout(response: Response) -> MessageResponse:
-    """Remove the authentication cookie from the browser."""
+    """Delete the JWT cookie."""
 
     response.delete_cookie(
         key=SESSION_COOKIE_NAME,
@@ -159,13 +152,9 @@ def logout(response: Response) -> MessageResponse:
 def change_password(
     payload: ChangePasswordRequest,
     current_user: dict[str, Any] = Depends(require_user),
+    catalyst_app: Any | None = Depends(get_catalyst_app),
 ) -> MessageResponse:
-    """
-    Change the password belonging to the authenticated user.
-
-    The username comes from the verified session rather than the request,
-    preventing one user from attempting to change another user's password.
-    """
+    """Change the authenticated user's password."""
 
     if payload.newPassword != payload.confirmPassword:
         raise HTTPException(
@@ -176,16 +165,17 @@ def change_password(
     if payload.currentPassword == payload.newPassword:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="The new password must be different from the current password.",
+            detail="The new password must differ from the current password.",
         )
 
-    password_changed = change_user_password(
+    changed = change_user_password(
         username=current_user["username"],
         current_password=payload.currentPassword,
         new_password=payload.newPassword,
+        catalyst_app=catalyst_app,
     )
 
-    if not password_changed:
+    if not changed:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Current password is incorrect.",

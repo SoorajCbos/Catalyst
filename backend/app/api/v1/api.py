@@ -2,9 +2,10 @@ from fastapi import APIRouter, Depends
 
 from app.api.v1.routes import (
     auth,
+    catalyst_status,
     health,
-    organizations,
     organization_guides,
+    organizations,
     templates,
     users,
 )
@@ -12,7 +13,7 @@ from app.core.access import require_platform_admin
 
 api_router = APIRouter()
 
-# Health and authentication must remain public.
+# Public routes.
 api_router.include_router(
     health.router,
     prefix="/health",
@@ -25,7 +26,7 @@ api_router.include_router(
     tags=["auth"],
 )
 
-# Only platform administrators can manage organizations.
+# Platform administrator routes.
 api_router.include_router(
     organizations.router,
     prefix="/organizations",
@@ -33,15 +34,6 @@ api_router.include_router(
     dependencies=[Depends(require_platform_admin)],
 )
 
-# User routes perform their own platform-admin and organization-admin
-# checks because each role has different organization permissions.
-api_router.include_router(
-    users.router,
-    prefix="/users",
-    tags=["users"],
-)
-
-# Only platform administrators can manage reusable system templates.
 api_router.include_router(
     templates.router,
     prefix="/templates",
@@ -54,4 +46,18 @@ api_router.include_router(
     prefix="/organization-guides",
     tags=["organization-guides"],
     dependencies=[Depends(require_platform_admin)],
+)
+
+# User routes enforce their own organization-specific permissions.
+api_router.include_router(
+    users.router,
+    prefix="/users",
+    tags=["users"],
+)
+
+# Used only to verify AppSail-to-Data-Store connectivity.
+api_router.include_router(
+    catalyst_status.router,
+    prefix="/catalyst-status",
+    tags=["catalyst"],
 )

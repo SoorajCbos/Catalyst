@@ -1,4 +1,4 @@
-"""Local template storage used while developing and testing."""
+"""Template storage: SQLite locally, Catalyst Data Store in AppSail."""
 
 import json
 import uuid
@@ -8,7 +8,7 @@ from app.services.user_store import get_connection
 
 
 def initialize_template_store() -> None:
-    """Create the local templates table when necessary."""
+    """Create the local testing table."""
 
     with get_connection() as connection:
         connection.execute(
@@ -25,77 +25,73 @@ def initialize_template_store() -> None:
         )
 
 
-def list_templates() -> list[dict[str, Any]]:
-    """Return every template ordered by name."""
+def list_templates(
+    catalyst_app: Any | None = None,
+) -> list[dict[str, Any]]:
+    """List templates from the active storage system."""
+
+    if catalyst_app is not None:
+        rows = _get_all_catalyst_rows(catalyst_app)
+        return [_catalyst_to_response(row) for row in rows]
 
     with get_connection() as connection:
         rows = connection.execute(
             """
-            SELECT
-                record_id,
-                name,
-                subject,
-                body,
-                allowed_merge_fields,
-                active
+            SELECT record_id, name, subject, body,
+                   allowed_merge_fields, active
             FROM templates
             ORDER BY name
             """
         ).fetchall()
 
-    return [_to_response(row) for row in rows]
+    return [_sqlite_to_response(row) for row in rows]
 
 
-def get_template(record_id: str) -> dict[str, Any] | None:
-    """Return one template or None when it does not exist."""
+def get_template(
+    record_id: str,
+    catalyst_app: Any | None = None,
+) -> dict[str, Any] | None:
+    """Return one template."""
+
+    if catalyst_app is not None:
+        try:
+            row = (
+                catalyst_app.datastore()
+                .table("Templates")
+                .get_row(record_id)
+            )
+            return _catalyst_to_response(row)
+        except Exception:
+            return None
 
     with get_connection() as connection:
         row = connection.execute(
             """
-            SELECT
-                record_id,
-                name,
-                subject,
-                body,
-                allowed_merge_fields,
-                active
+            SELECT record_id, name, subject, body,
+                   allowed_merge_fields, active
             FROM templates
             WHERE record_id = ?
             """,
             (record_id,),
         ).fetchone()
 
-    return _to_response(row) if row else None
+    return _sqlite_to_response(row) if row else None
 
 
 def template_name_exists(
     name: str,
     excluded_record_id: str | None = None,
+    catalyst_app: Any | None = None,
 ) -> bool:
-    """
-    Check whether a template name already exists.
+    """Check template-name uniqueness."""
 
-    excluded_record_id is used while editing so a template does not
-    conflict with its own existing name.
-    """
+    templates = list_templates(catalyst_app)
 
-    with get_connection() as connection:
-        if excluded_record_id:
-            row = connection.execute(
-                """
-                SELECT 1
-                FROM templates
-                WHERE name = ? AND record_id != ?
-                """,
-                (name, excluded_record_id),
-            ).fetchone()
-        else:
-            row = connection.execute(
-                "SELECT 1 FROM templates WHERE name = ?",
-                (name,),
-            ).fetchone()
-
-    return row is not None
+    return any(
+        template["name"].casefold() == name.casefold()
+        and template["recordId"] != excluded_record_id
+        for template in templates
+    )
 
 
 def create_template(
@@ -103,24 +99,34 @@ def create_template(
     subject: str,
     body: str,
     merge_fields: list[str],
+    catalyst_app: Any | None = None,
 ) -> dict[str, Any]:
-    """Create and return a reusable template."""
+    """Create a reusable template."""
+
+    if catalyst_app is not None:
+        row = (
+            catalyst_app.datastore()
+            .table("Templates")
+            .insert_row(
+                {
+                    "TemplateName": name,
+                    "Subject": subject,
+                    "Body": body,
+                    "AllowedMergeFields": json.dumps(merge_fields),
+                    "IsActive": True,
+                }
+            )
+        )
+        return _catalyst_to_response(row)
 
     record_id = f"template_{uuid.uuid4().hex[:12]}"
-
-    # SQLite does not have a list type, so store the field names as JSON.
-    stored_merge_fields = json.dumps(merge_fields)
 
     with get_connection() as connection:
         connection.execute(
             """
             INSERT INTO templates (
-                record_id,
-                name,
-                subject,
-                body,
-                allowed_merge_fields,
-                active
+                record_id, name, subject, body,
+                allowed_merge_fields, active
             )
             VALUES (?, ?, ?, ?, ?, ?)
             """,
@@ -129,19 +135,12 @@ def create_template(
                 name,
                 subject,
                 body,
-                stored_merge_fields,
+                json.dumps(merge_fields),
                 1,
             ),
         )
 
-    return {
-        "recordId": record_id,
-        "name": name,
-        "subject": subject,
-        "body": body,
-        "allowedMergeFields": merge_fields,
-        "active": True,
-    }
+    return get_template(record_id)  # type: ignore[return-value]
 
 
 def update_template(
@@ -150,17 +149,30 @@ def update_template(
     subject: str,
     body: str,
     merge_fields: list[str],
+    catalyst_app: Any | None = None,
 ) -> dict[str, Any] | None:
-    """Update a template and return its new values."""
+    """Update an existing template."""
+
+    if catalyst_app is not None:
+        try:
+            catalyst_app.datastore().table("Templates").update_row(
+                {
+                    "ROWID": record_id,
+                    "TemplateName": name,
+                    "Subject": subject,
+                    "Body": body,
+                    "AllowedMergeFields": json.dumps(merge_fields),
+                }
+            )
+            return get_template(record_id, catalyst_app)
+        except Exception:
+            return None
 
     with get_connection() as connection:
         result = connection.execute(
             """
             UPDATE templates
-            SET
-                name = ?,
-                subject = ?,
-                body = ?,
+            SET name = ?, subject = ?, body = ?,
                 allowed_merge_fields = ?
             WHERE record_id = ?
             """,
@@ -173,17 +185,27 @@ def update_template(
             ),
         )
 
-    if result.rowcount != 1:
-        return None
-
-    return get_template(record_id)
+    return get_template(record_id) if result.rowcount == 1 else None
 
 
 def set_template_active(
     record_id: str,
     active: bool,
+    catalyst_app: Any | None = None,
 ) -> dict[str, Any] | None:
-    """Enable or disable a template without deleting it."""
+    """Enable or disable a template."""
+
+    if catalyst_app is not None:
+        try:
+            catalyst_app.datastore().table("Templates").update_row(
+                {
+                    "ROWID": record_id,
+                    "IsActive": active,
+                }
+            )
+            return get_template(record_id, catalyst_app)
+        except Exception:
+            return None
 
     with get_connection() as connection:
         result = connection.execute(
@@ -195,14 +217,40 @@ def set_template_active(
             (int(active), record_id),
         )
 
-    if result.rowcount != 1:
-        return None
-
-    return get_template(record_id)
+    return get_template(record_id) if result.rowcount == 1 else None
 
 
-def _to_response(row) -> dict[str, Any]:
-    """Convert a SQLite row into the frontend response format."""
+def _get_all_catalyst_rows(
+    catalyst_app: Any,
+) -> list[dict[str, Any]]:
+    """Read all Catalyst template rows."""
+
+    table = catalyst_app.datastore().table("Templates")
+    rows: list[dict[str, Any]] = []
+    next_token: str | None = None
+
+    while True:
+        result = (
+            table.get_paged_rows(next_token=next_token, max_rows=200)
+            if next_token
+            else table.get_paged_rows(max_rows=200)
+        )
+
+        rows.extend(result.get("data", []))
+
+        if not result.get("more_records"):
+            break
+
+        next_token = result.get("next_token")
+
+        if not next_token:
+            break
+
+    return rows
+
+
+def _sqlite_to_response(row) -> dict[str, Any]:
+    """Convert SQLite data to the API format."""
 
     return {
         "recordId": row["record_id"],
@@ -211,4 +259,19 @@ def _to_response(row) -> dict[str, Any]:
         "body": row["body"],
         "allowedMergeFields": json.loads(row["allowed_merge_fields"]),
         "active": bool(row["active"]),
+    }
+
+
+def _catalyst_to_response(row: dict[str, Any]) -> dict[str, Any]:
+    """Convert Catalyst data to the API format."""
+
+    return {
+        "recordId": str(row["ROWID"]),
+        "name": row["TemplateName"],
+        "subject": row["Subject"],
+        "body": row["Body"],
+        "allowedMergeFields": json.loads(
+            row.get("AllowedMergeFields") or "[]"
+        ),
+        "active": bool(row["IsActive"]),
     }
