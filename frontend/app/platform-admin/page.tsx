@@ -99,6 +99,13 @@ export default function PlatformAdminPage() {
         Add organizations and assign their purchased tier and member limit.
       </p>
 
+      <a
+        href="/platform-admin/guides"
+        className="mt-5 inline-block rounded-md border border-[#1e3a3a] px-4 py-2 text-sm font-semibold text-[#1e3a3a]"
+      >
+        Organization permission guides
+      </a>
+
       <section className="mt-8 rounded-lg border border-[#d6cab8] bg-white p-6">
         <h2 className="text-lg font-semibold text-[#172026]">Add an organization</h2>
 

@@ -4,6 +4,7 @@ from app.api.v1.routes import (
     auth,
     health,
     organizations,
+    organization_guides,
     templates,
     users,
 )
@@ -45,5 +46,12 @@ api_router.include_router(
     templates.router,
     prefix="/templates",
     tags=["templates"],
+    dependencies=[Depends(require_platform_admin)],
+)
+
+api_router.include_router(
+    organization_guides.router,
+    prefix="/organization-guides",
+    tags=["organization-guides"],
     dependencies=[Depends(require_platform_admin)],
 )

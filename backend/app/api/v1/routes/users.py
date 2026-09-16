@@ -1,5 +1,6 @@
 """Protected API routes for listing and creating users."""
 
+import sqlite3
 from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -104,6 +105,8 @@ def post_user(
                 detail="Organization administrators can only add members.",
             )
 
+    # Usernames are the login identifier and must be unique globally.
+    # Email addresses are contact data and are intentionally allowed to repeat.
     if username_exists(username):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -129,11 +132,21 @@ def post_user(
             detail="The organization has reached its member limit.",
         )
 
-    user = create_user(
-        username=username,
-        email=email,
-        organization_id=payload.organizationId,
-        profile=payload.profile,
-    )
+    try:
+        user = create_user(
+            username=username,
+            email=email,
+            organization_id=payload.organizationId,
+            profile=payload.profile,
+        )
+    except sqlite3.IntegrityError as error:
+        # The database UNIQUE constraint remains the final authority if two
+        # requests pass username_exists() at the same time.
+        if "users.username" in str(error) or "username" in str(error):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="That username is already in use.",
+            ) from error
+        raise
 
     return CreatedUserResponse(**user)
