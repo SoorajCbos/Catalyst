@@ -1,9 +1,10 @@
-"""Reusable authentication and role checks for protected API routes."""
+"""Authentication and role checks for protected API routes."""
 
 from typing import Any
 
-from fastapi import HTTPException, Request, status
+from fastapi import Depends, HTTPException, Request, status
 
+from app.core.catalyst_app import get_catalyst_app
 from app.core.jwt_auth import (
     SESSION_COOKIE_NAME,
     decode_access_token,
@@ -11,8 +12,11 @@ from app.core.jwt_auth import (
 from app.services.user_store import get_user_by_record_id
 
 
-def require_user(request: Request) -> dict[str, Any]:
-    """Return the current active user or reject the request."""
+def require_user(
+    request: Request,
+    catalyst_app: Any | None = Depends(get_catalyst_app),
+) -> dict[str, Any]:
+    """Return the current active user."""
 
     token = request.cookies.get(SESSION_COOKIE_NAME)
 
@@ -30,7 +34,11 @@ def require_user(request: Request) -> dict[str, Any]:
             detail="Session is invalid or expired.",
         )
 
-    user = get_user_by_record_id(claims["sub"])
+    # Localhost reads SQLite; AppSail reads Catalyst Users.
+    user = get_user_by_record_id(
+        claims["sub"],
+        catalyst_app,
+    )
 
     if user is None:
         raise HTTPException(
@@ -47,25 +55,26 @@ def require_user(request: Request) -> dict[str, Any]:
     return user
 
 
-def require_platform_admin(request: Request) -> dict[str, Any]:
-    """Allow only active platform administrators."""
+def require_platform_admin(
+    current_user: dict[str, Any] = Depends(require_user),
+) -> dict[str, Any]:
+    """Allow only platform administrators."""
 
-    user = require_user(request)
-
-    if user["profile"] != "platform_admin":
+    if current_user["profile"] != "platform_admin":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Platform administrator access required.",
         )
 
-    return user
+    return current_user
 
-def require_admin(request: Request) -> dict[str, Any]:
-    """Allow platform administrators and organization administrators."""
 
-    user = require_user(request)
+def require_admin(
+    current_user: dict[str, Any] = Depends(require_user),
+) -> dict[str, Any]:
+    """Allow platform and organization administrators."""
 
-    if user["profile"] not in {
+    if current_user["profile"] not in {
         "platform_admin",
         "organization_admin",
     }:
@@ -74,4 +83,4 @@ def require_admin(request: Request) -> dict[str, Any]:
             detail="Administrator access required.",
         )
 
-    return user
+    return current_user
