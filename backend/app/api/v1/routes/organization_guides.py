@@ -1,8 +1,11 @@
-from typing import Literal
+"""Organization permission-guide routes."""
 
-from fastapi import APIRouter, HTTPException, status
+from typing import Any, Literal
+
+from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 
+from app.core.catalyst_app import get_catalyst_app
 from app.services.organization_guide_store import (
     create_organization_guide,
     get_organization_guide,
@@ -23,6 +26,8 @@ class OrganizationGuideResponse(BaseModel):
     fileName: str
     filePath: str
     content: str
+    version: int
+    active: bool
     createdAt: str
     updatedAt: str
 
@@ -38,10 +43,16 @@ class SaveOrganizationGuideRequest(BaseModel):
 @router.get("", response_model=list[OrganizationGuideResponse])
 def get_guides(
     organization_id: str | None = None,
+    catalyst_app: Any | None = Depends(get_catalyst_app),
 ) -> list[OrganizationGuideResponse]:
+    """List guides using Catalyst or the local fallback."""
+
     return [
         OrganizationGuideResponse(**guide)
-        for guide in list_organization_guides(organization_id)
+        for guide in list_organization_guides(
+            organization_id,
+            catalyst_app,
+        )
     ]
 
 
@@ -52,10 +63,13 @@ def get_guides(
 )
 def post_guide(
     payload: SaveOrganizationGuideRequest,
+    catalyst_app: Any | None = Depends(get_catalyst_app),
 ) -> OrganizationGuideResponse:
+    """Create a Markdown guide."""
+
     organization_id = payload.organizationId.strip()
 
-    if get_organization(organization_id) is None:
+    if get_organization(organization_id, catalyst_app) is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Organization not found.",
@@ -67,18 +81,26 @@ def post_guide(
         guide_type=payload.guideType,
         audience=payload.audience.strip(),
         content=payload.content,
+        catalyst_app=catalyst_app,
     )
+
     return OrganizationGuideResponse(**guide)
 
 
-@router.put("/{record_id}", response_model=OrganizationGuideResponse)
+@router.put(
+    "/{record_id}",
+    response_model=OrganizationGuideResponse,
+)
 def put_guide(
     record_id: str,
     payload: SaveOrganizationGuideRequest,
+    catalyst_app: Any | None = Depends(get_catalyst_app),
 ) -> OrganizationGuideResponse:
+    """Update a guide and create a new file version."""
+
     organization_id = payload.organizationId.strip()
 
-    if get_organization(organization_id) is None:
+    if get_organization(organization_id, catalyst_app) is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Organization not found.",
@@ -91,6 +113,7 @@ def put_guide(
         guide_type=payload.guideType,
         audience=payload.audience.strip(),
         content=payload.content,
+        catalyst_app=catalyst_app,
     )
 
     if guide is None:
