@@ -213,7 +213,6 @@ def update_organization_guide(
         )
 
         # Delete the previous physical file after metadata is updated.
-        _delete_file(catalyst_app, existing["filePath"])
 
         return get_organization_guide(record_id, catalyst_app)
 
