@@ -1,0 +1,17 @@
+build/
+# Environment
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Local data — must never reach the repo or the deployed app
+data/*.db
+data/*.sqlite3
