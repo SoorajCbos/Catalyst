@@ -1,5 +1,7 @@
 """FastAPI application entry point."""
 
+from app.services.agent_call_store import initialize_agent_call_store
+
 import uvicorn
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -18,6 +20,7 @@ initialize_user_store()
 initialize_organization_store()
 initialize_template_store()
 initialize_organization_guide_store()
+initialize_agent_call_store()
 
 app = FastAPI(title="Catalyst Backend")
 

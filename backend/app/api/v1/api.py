@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends
 
 from app.api.v1.routes import (
+    agents,
     auth,
     catalyst_status,
     health,
@@ -13,7 +14,6 @@ from app.core.access import require_platform_admin
 
 api_router = APIRouter()
 
-# Public routes.
 api_router.include_router(
     health.router,
     prefix="/health",
@@ -26,7 +26,6 @@ api_router.include_router(
     tags=["auth"],
 )
 
-# Platform administrator routes.
 api_router.include_router(
     organizations.router,
     prefix="/organizations",
@@ -48,16 +47,20 @@ api_router.include_router(
     dependencies=[Depends(require_platform_admin)],
 )
 
-# User routes enforce their own organization-specific permissions.
 api_router.include_router(
     users.router,
     prefix="/users",
     tags=["users"],
 )
 
-# Used only to verify AppSail-to-Data-Store connectivity.
 api_router.include_router(
     catalyst_status.router,
     prefix="/catalyst-status",
     tags=["catalyst"],
+)
+
+api_router.include_router(
+    agents.router,
+    prefix="/agents",
+    tags=["agents"],
 )
