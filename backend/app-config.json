@@ -1,0 +1,11 @@
+{
+  "command": "python3 -m app.main",
+  "build_path": "build",
+  "stack": "python_3_13",
+  "env_variables": {
+    "APP_ENV": "production",
+    "ORGANIZATION_GUIDE_FOLDER_ID": "100295000000068007",
+  },
+  "memory": 256,
+  "scripts": {}
+}
