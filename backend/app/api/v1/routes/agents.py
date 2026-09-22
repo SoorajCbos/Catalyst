@@ -1,8 +1,8 @@
-"""Agent-chat endpoint with context loading and audit logging."""
+"""Agent endpoints with context loading and audit logging."""
 
 from typing import Any
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 
 from app.core.access import require_user
@@ -12,22 +12,47 @@ from app.services.agent_call_store import (
     start_agent_call,
 )
 from app.services.agent_context import build_agent_context
+from app.services.agent_registry import get_agent, list_agents
 
 router = APIRouter()
 
 
+class AgentResponse(BaseModel):
+    """Agent available to the current application."""
+
+    key: str
+    name: str
+    description: str
+    agentId: str
+    available: bool
+
+
 class AgentChatRequest(BaseModel):
-    """Message submitted through the agent-chat interface."""
+    """Message and selected agent from the workspace."""
 
     message: str = Field(min_length=1, max_length=4_000)
+    agentKey: str = Field(min_length=1, max_length=100)
 
 
 class AgentChatResponse(BaseModel):
-    """Temporary response used before GenAI is connected."""
+    """Response returned to the agent workspace."""
 
     reply: str
     agentName: str
     contextLoaded: bool
+    callId: str
+
+
+@router.get("", response_model=list[AgentResponse])
+def get_agents(
+    _: dict[str, Any] = Depends(require_user),
+) -> list[AgentResponse]:
+    """List configured agents for the right-side panel."""
+
+    return [
+        AgentResponse(**agent)
+        for agent in list_agents()
+    ]
 
 
 @router.post("/chat", response_model=AgentChatResponse)
@@ -37,17 +62,30 @@ def chat(
     catalyst_app: Any | None = Depends(get_catalyst_app),
 ) -> AgentChatResponse:
     """
-    Test the complete context and logging pipeline.
+    Run the selected agent pipeline.
 
-    A real GenAI response will replace the temporary reply later.
+    Real model execution will replace the temporary reply after the
+    Catalyst agent IDs and API method are confirmed.
     """
 
-    agent_name = "permission-assistant"
+    agent = get_agent(payload.agentKey)
+
+    if agent is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Agent not found.",
+        )
+
+    if not agent["available"]:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"{agent['name']} is not configured.",
+        )
 
     call_id = start_agent_call(
         user_id=current_user["recordId"],
         organization_id=current_user["organizationId"],
-        agent_name=agent_name,
+        agent_name=agent["name"],
         prompt=payload.message,
         catalyst_app=catalyst_app,
     )
@@ -59,10 +97,10 @@ def chat(
             catalyst_app=catalyst_app,
         )
 
+        # Temporary response until the Catalyst agent API is connected.
         reply = (
-            "Agent context loaded successfully."
-            if context
-            else "No applicable organization guide was found."
+            f"{agent['name']} is selected. "
+            f"Organization context loaded: {bool(context)}."
         )
 
         complete_agent_call(
@@ -74,8 +112,9 @@ def chat(
 
         return AgentChatResponse(
             reply=reply,
-            agentName=agent_name,
+            agentName=agent["name"],
             contextLoaded=bool(context),
+            callId=call_id,
         )
 
     except Exception as error:

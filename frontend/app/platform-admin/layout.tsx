@@ -95,7 +95,9 @@ export default function PlatformAdminLayout({
       <header className="border-b border-[#d6cab8] bg-white">
         <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-4 px-6 py-4">
           <div>
-            <p className="font-bold">Platform Administration</p>
+            <p className="font-bold">
+              Platform Administration
+            </p>
 
             <p className="text-xs text-[#63717a]">
               Signed in as {currentUser.username}
@@ -131,13 +133,22 @@ export default function PlatformAdminLayout({
               Templates
             </a>
 
+            <a
+              href="/platform-admin/agent"
+              className="hover:underline"
+            >
+              Agent
+            </a>
+
             <button
               type="button"
               onClick={handleLogout}
               disabled={isLoggingOut}
               className="rounded-md bg-[#1e3a3a] px-4 py-2 text-white disabled:bg-[#9aa7a7]"
             >
-              {isLoggingOut ? "Signing out..." : "Sign out"}
+              {isLoggingOut
+                ? "Signing out..."
+                : "Sign out"}
             </button>
           </nav>
         </div>
@@ -147,3 +158,4 @@ export default function PlatformAdminLayout({
     </div>
   );
 }
+      
