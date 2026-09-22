@@ -3,9 +3,15 @@
   "build_path": "build",
   "stack": "python_3_13",
   "env_variables": {
-    "APP_ENV": "production",
+    "APP_ENV": "uat",
+    "ALLOWED_ORIGINS": "https://catalyst-nextjs-vijhnfhg.onslate.com",
+    "API_BASE_URL": "https://backend-10129808862.development.catalystappsail.com",
+    "FRONTEND_BASE_URL": "https://catalyst-nextjs-vijhnfhg.onslate.com",
     "ORGANIZATION_GUIDE_FOLDER_ID": "100295000000068007",
-    "SESSION_SECRET": "5FR9kZjCE6WyHv4ew02dAxSaVhcUmTiPI7N3obGqK1pztnDu"
+    "WRITABLE_DIR": "/tmp",
+    "SESSION_SECRET": "PRIVATE_VALUE",
+    "GLM_AGENT_ENDPOINT_KEY": "PRIVATE_VALUE",
+    "QWEN_AGENT_ENDPOINT_KEY": "PRIVATE_VALUE"
   },
   "memory": 256,
   "scripts": {}

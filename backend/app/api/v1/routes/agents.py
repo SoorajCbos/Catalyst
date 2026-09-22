@@ -1,8 +1,14 @@
-"""Agent endpoints with context loading and audit logging."""
+"""QuickML agent endpoints with context and audit logging."""
 
+import logging
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import (
+    APIRouter,
+    Depends,
+    HTTPException,
+    status,
+)
 from pydantic import BaseModel, Field
 
 from app.core.access import require_user
@@ -13,41 +19,46 @@ from app.services.agent_call_store import (
 )
 from app.services.agent_context import build_agent_context
 from app.services.agent_registry import get_agent, list_agents
+from app.services.quickml_agent import ask_glm, ask_qwen
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 class AgentResponse(BaseModel):
-    """Agent available to the current application."""
+    """Agent shown in the workspace."""
 
     key: str
     name: str
     description: str
     agentId: str
     available: bool
+    acceptsImages: bool
 
 
 class AgentChatRequest(BaseModel):
-    """Message and selected agent from the workspace."""
+    """Agent request from the workspace."""
 
-    message: str = Field(min_length=1, max_length=4_000)
+    message: str = Field(min_length=1, max_length=500)
     agentKey: str = Field(min_length=1, max_length=100)
+    images: list[str] = Field(default_factory=list, max_length=3)
 
 
 class AgentChatResponse(BaseModel):
-    """Response returned to the agent workspace."""
+    """QuickML response returned to the workspace."""
 
     reply: str
     agentName: str
     contextLoaded: bool
     callId: str
+    tokensUsed: int
 
 
 @router.get("", response_model=list[AgentResponse])
 def get_agents(
     _: dict[str, Any] = Depends(require_user),
 ) -> list[AgentResponse]:
-    """List configured agents for the right-side panel."""
+    """List configured QuickML agents."""
 
     return [
         AgentResponse(**agent)
@@ -61,12 +72,13 @@ def chat(
     current_user: dict[str, Any] = Depends(require_user),
     catalyst_app: Any | None = Depends(get_catalyst_app),
 ) -> AgentChatResponse:
-    """
-    Run the selected agent pipeline.
+    """Load user context and invoke the selected QuickML agent."""
 
-    Real model execution will replace the temporary reply after the
-    Catalyst agent IDs and API method are confirmed.
-    """
+    if catalyst_app is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="QuickML agents are available only in Catalyst.",
+        )
 
     agent = get_agent(payload.agentKey)
 
@@ -97,16 +109,31 @@ def chat(
             catalyst_app=catalyst_app,
         )
 
-        # Temporary response until the Catalyst agent API is connected.
-        reply = (
-            f"{agent['name']} is selected. "
-            f"Organization context loaded: {bool(context)}."
+        model_prompt = (
+            "Organization permission context:\n"
+            f"{context or 'No organization guide is available.'}\n\n"
+            "User request:\n"
+            f"{payload.message}"
         )
+
+        if payload.agentKey == "glm":
+            reply, tokens_used = ask_glm(
+                catalyst_app,
+                model_prompt,
+            )
+        elif payload.agentKey == "qwen":
+            reply, tokens_used = ask_qwen(
+                catalyst_app,
+                model_prompt,
+                payload.images,
+            )
+        else:
+            raise ValueError("Unsupported agent.")
 
         complete_agent_call(
             record_id=call_id,
             status="completed",
-            tokens_used=0,
+            tokens_used=tokens_used,
             catalyst_app=catalyst_app,
         )
 
@@ -115,13 +142,23 @@ def chat(
             agentName=agent["name"],
             contextLoaded=bool(context),
             callId=call_id,
+            tokensUsed=tokens_used,
         )
 
     except Exception as error:
+        logger.exception(
+            "QuickML request failed for agent %s (call_id=%s)",
+            agent["name"],
+            call_id,
+        )
         complete_agent_call(
             record_id=call_id,
             status="failed",
             error_message=str(error)[:1_000],
             catalyst_app=catalyst_app,
         )
-        raise
+
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"{agent['name']} request failed: {error}",
+        ) from error
