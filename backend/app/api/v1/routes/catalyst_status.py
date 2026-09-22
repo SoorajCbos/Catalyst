@@ -32,4 +32,4 @@ def get_catalyst_status(
     return {
         "connected": True,
         "organizationRowsRead": len(result.get("data", [])),
-    }
+    }   

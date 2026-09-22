@@ -5,28 +5,28 @@ from typing import Any
 
 
 def list_agents() -> list[dict[str, Any]]:
-    """
-    Return configured agents.
-
-    Agent IDs come from environment variables so Development and
-    Production can use different Catalyst agents without code changes.
-    """
+    """Return configured QuickML agents."""
 
     agents = [
         {
-            "key": "qwen",
-            "name": "Qwen",
-            "description": "General reasoning and assistance.",
-            "agentId": os.environ.get("QWEN_AGENT_ID", ""),
+            "key": "glm",
+            "name": "GLM-4.7-Flash",
+            "description": "Text chat, reasoning and agent workflows.",
+            "agentId": os.environ.get(
+                "GLM_AGENT_ENDPOINT_KEY",
+                "",
+            ),
+            "acceptsImages": False,
         },
         {
-            "key": "secondary",
-            "name": os.environ.get(
-                "SECONDARY_AGENT_NAME",
-                "Secondary Agent",
+            "key": "qwen",
+            "name": "Qwen 3.6 Vision",
+            "description": "Image, document and chart analysis.",
+            "agentId": os.environ.get(
+                "QWEN_AGENT_ENDPOINT_KEY",
+                "",
             ),
-            "description": "Specialized organization agent.",
-            "agentId": os.environ.get("SECONDARY_AGENT_ID", ""),
+            "acceptsImages": True,
         },
     ]
 
