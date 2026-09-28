@@ -14,6 +14,7 @@ from app.services.organization_guide_store import (
 from app.services.organization_store import initialize_organization_store
 from app.services.template_store import initialize_template_store
 from app.services.user_store import initialize_user_store
+from app.services.chat_session_store import initialize_chat_session_store
 
 # Create local testing tables when the backend starts.
 initialize_user_store()
@@ -21,6 +22,7 @@ initialize_organization_store()
 initialize_template_store()
 initialize_organization_guide_store()
 initialize_agent_call_store()
+initialize_chat_session_store()
 
 app = FastAPI(title="Catalyst Backend")
 
